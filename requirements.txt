@@ -1,5 +1,5 @@
 requests==2.18.4
-Pygments==2.2.0
+pygments==2.2.0
 pytz==2018.3
 pyOpenSSL==17.5.0
 edgegrid_python==1.1.0
