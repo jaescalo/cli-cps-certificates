@@ -1,0 +1,249 @@
+#!/usr/bin/env python
+
+# Copyright 2017 Akamai Technologies, Inc. All Rights Reserved
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+usage: akamai-cps.py list --certs [--edgerc EDGERC] [--section SECTION]
+                          [--verbose]
+
+required arguments:
+  --certs            Get the certificates expiration date
+
+optional arguments:
+  --edgerc EDGERC    Config file [default: ~/.edgerc]
+  --section SECTION  Config section in .edgerc
+  --verbose          Enable an interactive verbose mode
+
+Example #1:
+$ ./akamai-cps.py list -certs
+
+Example #2: 
+$ ./akamai-cps.py list -certs --edgerc <~/other_location/.edgerc> --section <other_section> --verbose
+
+"""
+
+import requests, json, sys, os
+from akamai.edgegrid import EdgeGridAuth,EdgeRc
+import urllib
+import argparse
+import configparser
+from pygments import highlight, lexers, formatters
+import logging
+from OpenSSL import crypto
+from datetime import datetime
+import pytz
+
+if sys.version_info[0] < 3:
+    from urlparse import urljoin
+else:
+    from urllib.parse import urljoin
+
+
+class MyArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_help(sys.stderr)
+        self.exit(0, '%s: error: %s\n' % (self.prog, message))
+
+
+def init_config(edgerc_file, section):
+	global baseurl, session
+	# Check if the edgerc_file variable or the AKAMAI_EDGERC env var exist then use a default value if they don't exist.
+	if not edgerc_file:
+	    if not os.getenv("AKAMAI_EDGERC"):
+	        edgerc_file = os.path.join(os.path.expanduser("~"), '.edgerc')
+	    else:
+	        edgerc_file = os.getenv("AKAMAI_EDGERC")
+
+	if not os.access(edgerc_file, os.R_OK):
+	    print("Unable to read edgerc file \"%s\"" % edgerc_file)
+	    exit(1)
+
+	if not section:
+	    if not os.getenv("AKAMAI_EDGERC_SECTION"):
+	        section = "papi"
+	    else:
+	        section = os.getenv("AKAMAI_EDGERC_SECTION")
+
+	try:
+	    edgerc = EdgeRc(edgerc_file)
+	    baseurl = 'https://%s' % edgerc.get(section, 'host')
+
+	    session = requests.Session()
+	    session.auth = EdgeGridAuth.from_edgerc(edgerc, section)
+
+	    return(baseurl, session)
+
+	except configparser.NoSectionError:
+	    print("Edgerc section \"%s\" not found" % section)
+	    exit(1)
+	except Exception:
+	    print("Unknown error occurred trying to read edgerc file (%s)" % edgerc_file)
+	    exit(1)
+
+
+def get_contractId():
+    logging.info('Calling the PAPI API to get the contractId')
+
+    # Convert the json object to a string that the API can interpret
+    api_endpoint = (urljoin(baseurl, '/papi/v1/contracts'))
+    logging.info('API Endpoint: GET ' + api_endpoint)
+    request = session.get(api_endpoint)
+    request = json.loads(request.text)
+    colorful_json = format_json(request)
+
+    contractId = request['contracts']['items'][0]['contractId'][4:]
+
+    logging.info('Body of the response: \n' + colorful_json)
+    logging.info('Contract ID: ' + contractId)
+    if verbose == True: logging.info(input('Press Enter to Continue') + 'Let it be...')
+
+    return(contractId)
+
+
+def list_enrollments():
+	contractId = get_contractId()
+
+	logging.info('Calling the CPS API to list the enrollments under the contract' + contractId)
+
+	headers = {'Accept': 'application/vnd.akamai.cps.enrollments.v4+json'}
+	api_endpoint = (urljoin(baseurl, '/cps/v2/enrollments?contractId=' + contractId))
+	logging.info('API Endpoint: GET ' + api_endpoint)
+	logging.info('Headers for the GET request: ' + str(headers))
+
+	request = session.get(api_endpoint, headers=headers)
+	request = json.loads(request.text)
+	colorful_json = format_json(request)
+
+	#logging.info('Body of the response: \n' + colorful_json)
+
+	if verbose == True: logging.info(input('Press Enter to Continue') + 'Children of the Sea...')
+
+	get_enrollmentIds(request)
+	return()
+
+
+def get_enrollmentIds(response_body):
+	logging.info('Filtering the response body for all the enrollment IDs')
+	for entry in response_body['enrollments']:
+		logging.info(entry['location'][20:] + ' - CN: ' + entry['csr']['cn'])
+
+	if verbose == True: logging.info(input('Press Enter to Continue') + 'Aces High...')
+
+	# Example for the first enrollment for the verbose mode
+	flag = True
+	get_an_enrollment(response_body['enrollments'][0]['location'][20:], flag)
+	flag = False
+
+	for entry in response_body['enrollments']:
+		print('Working on enrollmentId: ' + entry['location'][20:] + ' - CN: ' + entry['csr']['cn'])
+		body_with_leaf_cert = get_an_enrollment(entry['location'][20:])
+		parse_certs(body_with_leaf_cert)
+
+
+def get_an_enrollment(enrollmentId, flag=''):
+	if flag == True: logging.info('Calling the CPS API to get information from each enrollment. The following is an example from the first enrollment only.')
+
+	headers = {'Accept': 'application/vnd.akamai.cps.deployments.v3+json'}
+	api_endpoint = (urljoin(baseurl, '/cps/v2/enrollments/' + enrollmentId + '/deployments'))
+	if flag == True: logging.info('API Endpoint: GET ' + api_endpoint)
+	if flag == True: logging.info('Headers for the GET request: ' + str(headers))
+
+	request = session.get(api_endpoint, headers=headers)
+	request = json.loads(request.text)
+	colorful_json = format_json(request)
+
+	
+
+	if flag == True: logging.info('Body of the response: \n' + colorful_json)
+
+	if verbose == True and flag == True: logging.info(input('Press Enter to Continue') + 'Smoke on the Water...')
+	return(request)
+
+
+def parse_certs(leaf_cert):
+	# Do not consider certs not in prod.
+	if leaf_cert['production'] is not None:
+		leaf_cert = leaf_cert['production']['certificate']
+		logging.info(leaf_cert)
+
+		x509cert = crypto.load_certificate(crypto.FILETYPE_PEM, leaf_cert)
+		cert_exp_date = str(x509cert.get_notAfter())[2:-1]
+		#cert_exp_date = cert[2:-1]
+
+		cert_exp_date = datetime.strptime(str(cert_exp_date), "%Y%m%d%H%M%SZ").replace(tzinfo=pytz.UTC)
+		print('        Expiration Date:', cert_exp_date, '\n')
+
+	else:
+		print('Certificate not in Production\n')
+
+
+# JSON body formatting and coloring
+def format_json(json_body):
+    json_body = json.dumps(json_body, sort_keys=True, indent=4)
+    json_body = highlight(json_body, lexers.JsonLexer(), formatters.TerminalFormatter())
+    return(json_body)
+
+
+def main():
+	global verbose
+	# Help menu definition
+	parser = MyArgumentParser(
+	        description='CPS Enrollment Checker Python Example', add_help=False
+	)
+	parser.add_argument('--version', action='version', version='CPS Enrollments Check v1.0')
+
+	subparsers = parser.add_subparsers(title='Commands', dest='command', metavar="")
+
+	create_parser = subparsers.add_parser('help', help='Show available help')
+	parser_list = subparsers.add_parser('list', help='List command', add_help=False)
+
+	mandatory = parser_list.add_argument_group('required arguments')
+	mandatory.add_argument('--certs', action='store_true', required=True, help='Get the certificates expiration date')
+
+	optional = parser_list.add_argument_group('optional arguments')
+	optional.add_argument('--edgerc', help='Config file [default: ~/.edgerc]')
+	optional.add_argument('--section', help='Config section in .edgerc [default: papi]')
+	optional.add_argument('--verbose', action='store_true', help='Enable an interactive verbose mode')
+
+	opts = parser.parse_args()
+
+	if len(sys.argv) <= 1:
+	    parser.print_help()
+	    return 0
+
+	if opts.command == 'help':
+	    parser.print_help()
+	    return 0
+
+	elif opts.certs is True:
+	    verbose = False
+	    if opts.verbose:
+	        verbose = True
+	        logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
+	        logging.info("Verbose output.")
+	    else:
+	        logging.basicConfig(format="%(levelname)s: %(message)s")
+	    
+	    init_config(opts.edgerc, opts.section)
+	    list_enrollments()
+
+	else:
+	    # argparse will error on unexpected commands, but
+	    # in case we mistype one of the elif statements...
+	    parser.print_help(sys.stderr)
+
+
+if __name__ == '__main__':
+    main()
