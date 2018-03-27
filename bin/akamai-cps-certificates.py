@@ -124,11 +124,13 @@ def list_enrollments():
 
 	request = session.get(api_endpoint, headers=headers)
 	request = json.loads(request.text)
-	colorful_json = format_json(request)
+	request_example = request['enrollments'][0]
+	colorful_json = format_json(request_example)
 
-	#logging.info('Body of the response: \n' + colorful_json)
+	if verbose == True: logging.info(input('Press Enter to Continue') + 'Running Free...')
+	logging.info('Example body of the response for the 1st returned enrollment: \n' + colorful_json)
 
-	if verbose == True: logging.info(input('Press Enter to Continue') + 'Children of the Sea...')
+	if verbose == True: logging.info(input('Press Enter to Continue') + 'Highway Star...')
 
 	get_enrollmentIds(request)
 	return()
