@@ -45,7 +45,7 @@ Defaults are:
 --verbose: OFF`
 
 ```
-$ ./akamai-cps.py list -certs
+$ akamai cps-certificates list -certs
 
 ```
 
@@ -53,5 +53,5 @@ $ ./akamai-cps.py list -certs
 
 
 ```
-$ ./akamai-cps.py list -certs --edgerc <~/other_location/.edgerc> --section <other_section> --verbose
+$ akamai cps list -certs --edgerc <~/other_location/.edgerc> --section <other_section> --verbose
 ```
