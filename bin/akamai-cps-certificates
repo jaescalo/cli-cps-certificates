@@ -208,7 +208,8 @@ def main():
 
 	subparsers = parser.add_subparsers(title='Commands', dest='command', metavar="")
 
-	create_parser = subparsers.add_parser('help', help='Show available help')
+	create_parser = subparsers.add_parser('help', help='Show available help').add_argument('args', metavar="", nargs=argparse.REMAINDER)
+
 	parser_list = subparsers.add_parser('list', help='List command', add_help=False)
 
 	mandatory = parser_list.add_argument_group('required arguments')
@@ -226,8 +227,14 @@ def main():
 	    return 0
 
 	if opts.command == 'help':
-	    parser.print_help()
+
+	    if len(opts.args) > 0:
+	    	if opts.args[0] == 'list':
+	    		parser_list.print_help()
+	    else:
+	    	parser.print_help()
 	    return 0
+
 
 	elif opts.certs is True:
 	    verbose = False
